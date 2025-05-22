@@ -2,19 +2,22 @@ import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, TextInput, Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { useJustificatifs } from '../hooks/useJustificatifs';
+import * as FileSystem from 'expo-file-system';
+import { useAuth } from '../context/AuthContext';
 
 const JustificatifUploader = ({ type = 'identite', onSuccess }) => {
   const [uploading, setUploading] = useState(false);
   const [commentaire, setCommentaire] = useState('');
-  const { uploadJustificatif } = useJustificatifs();
+  const { authToken } = useAuth();
   const [selectedFile, setSelectedFile] = useState(null);
+  
+  const API_URL = 'http://192.168.1.X:8888/api'; // Remplacez X par votre IP
   
   // Gestion des permissions pour la caméra
   const requestCameraPermission = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permission refusée', 'Vous devez autoriser l\'accès à la caméra pour prendre des photos');
+      Alert.alert('Permission refusée', 'Vous devez autoriser l\'accès à la caméra');
       return false;
     }
     return true;
@@ -34,7 +37,7 @@ const JustificatifUploader = ({ type = 'identite', onSuccess }) => {
         setSelectedFile({
           uri: result.assets[0].uri,
           name: result.assets[0].uri.split('/').pop(),
-          type: 'image'
+          type: 'image/jpeg'
         });
       }
     } catch (error) {
@@ -59,7 +62,7 @@ const JustificatifUploader = ({ type = 'identite', onSuccess }) => {
         setSelectedFile({
           uri: result.assets[0].uri,
           name: 'photo_' + new Date().getTime() + '.jpg',
-          type: 'image'
+          type: 'image/jpeg'
         });
       }
     } catch (error) {
@@ -76,11 +79,11 @@ const JustificatifUploader = ({ type = 'identite', onSuccess }) => {
         copyToCacheDirectory: true,
       });
       
-      if (result.type === 'success') {
+      if (!result.canceled && result.assets && result.assets.length > 0) {
         setSelectedFile({
-          uri: result.uri,
-          name: result.name,
-          type: 'document'
+          uri: result.assets[0].uri,
+          name: result.assets[0].name,
+          type: 'application/pdf'
         });
       }
     } catch (error) {
@@ -89,7 +92,7 @@ const JustificatifUploader = ({ type = 'identite', onSuccess }) => {
     }
   };
   
-  // Gérer l'upload du fichier
+  // Gérer l'upload du fichier avec Expo FileSystem
   const handleUpload = async () => {
     if (!selectedFile) {
       Alert.alert('Erreur', 'Veuillez d\'abord sélectionner un fichier');
@@ -99,9 +102,30 @@ const JustificatifUploader = ({ type = 'identite', onSuccess }) => {
     setUploading(true);
     
     try {
-      const result = await uploadJustificatif(selectedFile.uri, type, commentaire);
+      // Utiliser FileSystem.uploadAsync pour Expo
+      const uploadResult = await FileSystem.uploadAsync(
+        `${API_URL}/justificatifs`,
+        selectedFile.uri,
+        {
+          fieldName: 'fichier',
+          httpMethod: 'POST',
+          mimeType: selectedFile.type,
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+            'Accept': 'application/json',
+          },
+          parameters: {
+            type: type,
+            commentaire: commentaire || ''
+          },
+          uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+        }
+      );
       
-      if (result) {
+      console.log('Upload response:', uploadResult);
+      
+      if (uploadResult.status === 200 || uploadResult.status === 201) {
+        const result = JSON.parse(uploadResult.body);
         Alert.alert('Succès', 'Votre justificatif a été envoyé avec succès');
         
         // Réinitialiser le formulaire
@@ -109,73 +133,19 @@ const JustificatifUploader = ({ type = 'identite', onSuccess }) => {
         setCommentaire('');
         
         if (onSuccess) {
-          onSuccess(result);
+          onSuccess(result.justificatif);
         }
+      } else {
+        throw new Error('Erreur lors de l\'upload');
       }
     } catch (error) {
       console.error('Erreur lors de l\'upload:', error);
+      Alert.alert('Erreur', 'Une erreur est survenue lors de l\'envoi du fichier');
     } finally {
       setUploading(false);
     }
   };
   
-  if (uploading) {
-    return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#0066CC" />
-        <Text style={styles.uploadingText}>Envoi en cours...</Text>
-      </View>
-    );
-  }
-  
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Ajouter un justificatif</Text>
-      
-      <View style={styles.buttonContainer}>
-        <TouchableOpacity style={styles.button} onPress={pickImage}>
-          <Text style={styles.buttonText}>Choisir depuis la galerie</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity style={styles.button} onPress={takePhoto}>
-          <Text style={styles.buttonText}>Prendre une photo</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity style={styles.button} onPress={pickDocument}>
-          <Text style={styles.buttonText}>Sélectionner un PDF</Text>
-        </TouchableOpacity>
-      </View>
-      
-      {selectedFile && (
-        <View style={styles.filePreview}>
-          <Text style={styles.filePreviewText}>
-            Fichier sélectionné: {selectedFile.name}
-          </Text>
-        </View>
-      )}
-      
-      <TextInput
-        style={styles.commentInput}
-        placeholder="Commentaire (optionnel)"
-        value={commentaire}
-        onChangeText={setCommentaire}
-        multiline={true}
-        numberOfLines={3}
-      />
-      
-      <TouchableOpacity 
-        style={[styles.uploadButton, !selectedFile && styles.disabledButton]} 
-        onPress={handleUpload}
-        disabled={!selectedFile}
-      >
-        <Text style={styles.uploadButtonText}>Envoyer le justificatif</Text>
-      </TouchableOpacity>
-      
-      <Text style={styles.infoText}>
-        Formats acceptés: JPG, PNG, PDF. Taille maximale: 10 Mo
-      </Text>
-    </View>
-  );
 };
 
 const styles = StyleSheet.create({

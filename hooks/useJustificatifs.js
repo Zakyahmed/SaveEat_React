@@ -1,18 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Alert } from 'react-native';
-import axios from 'axios';
-import { useAuth } from './useAuth'; // Hook pour gérer l'authentification
+import { Alert, Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system';
+import { useAuth } from '../context/AuthContext';
 
-const API_URL = 'https://api.saveeat.ch/api'; // À adapter selon votre environnement
+// IMPORTANT : Remplacez X par l'IP de votre machine
+const API_URL = 'http://192.168.1.X:8888/api'; // PAS de https://, juste http://
 
 export const useJustificatifs = () => {
   const [justificatifs, setJustificatifs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
-  const { authToken } = useAuth(); // Récupération du token d'authentification
+  const { authToken } = useAuth();
   
-  // Configuration de l'en-tête d'autorisation
+  // Configuration de l'en-tête d'autorisation pour les requêtes normales
   const axiosConfig = useCallback(() => {
     return {
       headers: {
@@ -31,16 +32,24 @@ export const useJustificatifs = () => {
     setError(null);
     
     try {
-      const response = await axios.get(`${API_URL}/justificatifs/status`, axiosConfig());
-      setJustificatifs(response.data.justificatifs || []);
+      const response = await fetch(`${API_URL}/justificatifs/status`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Accept': 'application/json',
+        }
+      });
+      
+      const data = await response.json();
+      setJustificatifs(data.justificatifs || []);
     } catch (err) {
       console.error('Erreur lors de la récupération des justificatifs:', err);
-      setError(err.response?.data?.message || 'Une erreur est survenue lors de la récupération des justificatifs');
+      setError('Une erreur est survenue lors de la récupération des justificatifs');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [authToken, axiosConfig]);
+  }, [authToken]);
   
   // Rafraîchissement des données
   const refreshJustificatifs = useCallback(() => {
@@ -59,52 +68,52 @@ export const useJustificatifs = () => {
     setError(null);
     
     try {
-      // Créer un objet FormData pour l'upload de fichier
-      const formData = new FormData();
-      
-      // Extraire le nom du fichier de l'URI
+      // Déterminer le type MIME
       const fileName = fileUri.split('/').pop();
-      
-      // Détecter le type MIME
-      let fileType = 'application/pdf';
+      let mimeType = 'application/pdf';
       if (/\.(jpg|jpeg)$/i.test(fileName)) {
-        fileType = 'image/jpeg';
+        mimeType = 'image/jpeg';
       } else if (/\.png$/i.test(fileName)) {
-        fileType = 'image/png';
+        mimeType = 'image/png';
       }
       
-      // Ajouter le fichier
-      formData.append('fichier', {
-        uri: fileUri,
-        name: fileName,
-        type: fileType,
-      });
+      console.log('Upload URL:', `${API_URL}/justificatifs`);
+      console.log('File URI:', fileUri);
+      console.log('Auth Token:', authToken ? 'Present' : 'Missing');
       
-      // Ajouter les autres paramètres
-      formData.append('type', type);
-      if (commentaire) {
-        formData.append('commentaire', commentaire);
-      }
-      
-      const uploadConfig = {
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-          'Accept': 'application/json',
-          'Content-Type': 'multipart/form-data',
+      const uploadResult = await FileSystem.uploadAsync(
+        `${API_URL}/justificatifs`,
+        fileUri,
+        {
+          fieldName: 'fichier',
+          httpMethod: 'POST',
+          mimeType: mimeType,
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+            'Accept': 'application/json',
+          },
+          parameters: {
+            type: type,
+            commentaire: commentaire || ''
+          },
+          uploadType: FileSystem.FileSystemUploadType.MULTIPART,
         }
-      };
+      );
       
-      const response = await axios.post(`${API_URL}/justificatifs`, formData, uploadConfig);
+      console.log('Upload response status:', uploadResult.status);
+      console.log('Upload response body:', uploadResult.body);
       
-      // Rafraîchir la liste après l'upload
-      fetchJustificatifs();
-      
-      return response.data.justificatif;
+      if (uploadResult.status === 200 || uploadResult.status === 201) {
+        const result = JSON.parse(uploadResult.body);
+        fetchJustificatifs();
+        return result.justificatif;
+      } else {
+        throw new Error(`Erreur upload: ${uploadResult.status}`);
+      }
     } catch (err) {
       console.error('Erreur lors de l\'envoi du justificatif:', err);
-      const errorMsg = err.response?.data?.message || 'Une erreur est survenue lors de l\'envoi du justificatif';
-      setError(errorMsg);
-      Alert.alert('Erreur', errorMsg);
+      setError('Une erreur est survenue lors de l\'envoi');
+      Alert.alert('Erreur', 'Une erreur est survenue lors de l\'envoi du fichier');
       return null;
     } finally {
       setLoading(false);
@@ -121,17 +130,25 @@ export const useJustificatifs = () => {
     setLoading(true);
     
     try {
-      await axios.delete(`${API_URL}/justificatifs/${justificatifId}`, axiosConfig());
+      const response = await fetch(`${API_URL}/justificatifs/${justificatifId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Accept': 'application/json',
+        }
+      });
       
-      // Mettre à jour la liste des justificatifs après suppression
-      setJustificatifs(current => current.filter(j => j.id !== justificatifId));
-      
-      return true;
+      if (response.ok) {
+        // Mettre à jour la liste des justificatifs après suppression
+        setJustificatifs(current => current.filter(j => j.id !== justificatifId));
+        return true;
+      } else {
+        throw new Error('Erreur lors de la suppression');
+      }
     } catch (err) {
       console.error('Erreur lors de la suppression du justificatif:', err);
-      const errorMsg = err.response?.data?.message || 'Une erreur est survenue lors de la suppression';
-      setError(errorMsg);
-      Alert.alert('Erreur', errorMsg);
+      setError('Une erreur est survenue lors de la suppression');
+      Alert.alert('Erreur', 'Une erreur est survenue lors de la suppression');
       return false;
     } finally {
       setLoading(false);
