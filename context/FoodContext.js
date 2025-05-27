@@ -1,37 +1,7 @@
-// context/FoodContext.js 
+// context/FoodContext.js - Version avec API
 import React, { createContext, useState, useContext, useEffect, useCallback, useMemo } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import NetInfo from '@react-native-community/netinfo';
-
-// Types pour TypeScript (ou documentation de structure)
-/**
- * Structure d'un invendu
- * @typedef {Object} Invendu
- * @property {string} id - Identifiant unique
- * @property {string} restaurant - Nom du restaurant
- * @property {string} repas - Type de repas
- * @property {string} quantite - Quantité disponible
- * @property {string} description - Description détaillée
- * @property {string} limite - Date et heure limite
- * @property {string} status - Statut (pending, reserved, completed)
- * @property {string} [reservedBy] - ID de l'association ayant réservé
- */
-
-/**
- * Structure d'une réservation
- * @typedef {Object} Reservation
- * @property {string} id - Identifiant unique
- * @property {string} invenduId - ID de l'invendu réservé
- * @property {string} userId - ID de l'utilisateur
- * @property {string} date - Date de réservation
- * @property {string} status - Statut de la réservation
- */
-
-// Clés de stockage
-const STORAGE_KEYS = {
-  INVENDUS: '@saveeat:invendus:v1',
-  RESERVATIONS: '@saveeat:reservations:v1',
-};
+import ApiService from '../services/api';
+import { useAuth } from './AuthContext';
 
 // Contexte de gestion des invendus et réservations
 const FoodContext = createContext(null);
@@ -50,248 +20,344 @@ export const FoodProvider = ({ children }) => {
   // États principaux
   const [invendus, setInvendus] = useState([]);
   const [reservations, setReservations] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [restaurants, setRestaurants] = useState([]);
+  const [associations, setAssociations] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [lastUpdate, setLastUpdate] = useState(null);
 
-  // Charger les données depuis le stockage local
-  const loadData = useCallback(async () => {
+  // Récupérer le contexte d'authentification
+  const { authToken, user, userType } = useAuth();
+
+  // Charger les données initiales
+  useEffect(() => {
+    if (authToken && user) {
+      loadInitialData();
+    }
+  }, [authToken, user]);
+
+  // Charger toutes les données nécessaires
+  const loadInitialData = useCallback(async () => {
     try {
       setIsLoading(true);
-      const [storedInvendus, storedReservations] = await Promise.all([
-        AsyncStorage.getItem(STORAGE_KEYS.INVENDUS),
-        AsyncStorage.getItem(STORAGE_KEYS.RESERVATIONS)
-      ]);
+      setError(null);
 
-      // Convertir les chaînes JSON en objets
-      const parsedInvendus = storedInvendus ? JSON.parse(storedInvendus) : [];
-      const parsedReservations = storedReservations ? JSON.parse(storedReservations) : [];
+      // Charger les données en parallèle pour optimiser
+      const promises = [
+        ApiService.getInvendus(),
+        ApiService.getReservations()
+      ];
 
-      setInvendus(parsedInvendus);
-      setReservations(parsedReservations);
+      // Ajouter les restaurants/associations selon le type d'utilisateur
+      if (userType === 'association') {
+        promises.push(ApiService.getRestaurants());
+      } else if (userType === 'restaurant') {
+        promises.push(ApiService.getAssociations());
+      }
+
+      const results = await Promise.all(promises);
+
+      // Mettre à jour les états
+      setInvendus(results[0].data || []);
+      setReservations(results[1].data || []);
+
+      if (userType === 'association') {
+        setRestaurants(results[2]?.data || []);
+      } else if (userType === 'restaurant') {
+        setAssociations(results[2]?.data || []);
+      }
+
+      setLastUpdate(new Date());
     } catch (err) {
       console.error('Erreur de chargement des données', err);
-      setError('Impossible de charger les données');
+      setError(err.message || 'Impossible de charger les données');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [userType]);
+
+  // Rafraîchir les données
+  const refreshData = useCallback(async () => {
+    await loadInitialData();
+  }, [loadInitialData]);
+
+  // Ajouter un nouvel invendu
+  const addInvendu = useCallback(async (newInvendu) => {
+    try {
+      setIsLoading(true);
+      
+      const response = await ApiService.createInvendu(newInvendu);
+      
+      if (response.success && response.data) {
+        // Ajouter le nouvel invendu à la liste locale
+        setInvendus(prev => [response.data, ...prev]);
+        return response.data;
+      }
+      
+      throw new Error(response.message || 'Erreur lors de l\'ajout');
+    } catch (err) {
+      console.error('Erreur lors de l\'ajout d\'un invendu', err);
+      throw err;
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  // Sauvegarder les données dans le stockage local
-  const saveData = useCallback(async (newInvendus = null, newReservations = null) => {
-    try {
-      await Promise.all([
-        AsyncStorage.setItem(
-          STORAGE_KEYS.INVENDUS, 
-          JSON.stringify(newInvendus || invendus)
-        ),
-        AsyncStorage.setItem(
-          STORAGE_KEYS.RESERVATIONS, 
-          JSON.stringify(newReservations || reservations)
-        )
-      ]);
-    } catch (err) {
-      console.error('Erreur de sauvegarde', err);
-      throw err;
-    }
-  }, [invendus, reservations]);
-
-  // Ajouter un nouvel invendu
-  const addInvendu = useCallback(async (newInvendu) => {
-    try {
-      // Créer un invendu avec des métadonnées
-      const invenduWithMetadata = {
-        ...newInvendu,
-        id: `inv_${Date.now()}`, // ID unique
-        status: 'pending',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-
-      // Mettre à jour le state et sauvegarder
-      const updatedInvendus = [...invendus, invenduWithMetadata];
-      setInvendus(updatedInvendus);
-      await saveData(updatedInvendus);
-
-      return invenduWithMetadata;
-    } catch (err) {
-      console.error('Erreur lors de l\'ajout d\'un invendu', err);
-      throw err;
-    }
-  }, [invendus, saveData]);
-
   // Mettre à jour un invendu existant
   const updateInvendu = useCallback(async (id, updates) => {
     try {
-      const updatedInvendus = invendus.map(invendu => 
-        invendu.id === id 
-          ? { 
-              ...invendu, 
-              ...updates, 
-              updatedAt: new Date().toISOString() 
-            }
-          : invendu
-      );
-
-      setInvendus(updatedInvendus);
-      await saveData(updatedInvendus);
-
-      return updatedInvendus.find(inv => inv.id === id);
+      setIsLoading(true);
+      
+      const response = await ApiService.updateInvendu(id, updates);
+      
+      if (response.success && response.data) {
+        // Mettre à jour dans la liste locale
+        setInvendus(prev => prev.map(inv => 
+          inv.id === id ? response.data : inv
+        ));
+        return response.data;
+      }
+      
+      throw new Error(response.message || 'Erreur lors de la mise à jour');
     } catch (err) {
       console.error('Erreur de mise à jour', err);
       throw err;
+    } finally {
+      setIsLoading(false);
     }
-  }, [invendus, saveData]);
+  }, []);
+
+  // Supprimer un invendu
+  const deleteInvendu = useCallback(async (id) => {
+    try {
+      setIsLoading(true);
+      
+      const response = await ApiService.deleteInvendu(id);
+      
+      if (response.success) {
+        // Retirer de la liste locale
+        setInvendus(prev => prev.filter(inv => inv.id !== id));
+        return true;
+      }
+      
+      throw new Error(response.message || 'Erreur lors de la suppression');
+    } catch (err) {
+      console.error('Erreur de suppression', err);
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
   // Réserver un invendu
   const reserveInvendu = useCallback(async (invenduId, userId) => {
     try {
-      // Vérifier si l'invendu existe et est disponible
-      const invenduToReserve = invendus.find(inv => inv.id === invenduId);
-      if (!invenduToReserve || invenduToReserve.status !== 'pending') {
-        throw new Error('Invendu non disponible');
+      setIsLoading(true);
+      
+      const response = await ApiService.createReservation(invenduId);
+      
+      if (response.success && response.data) {
+        // Ajouter la réservation à la liste locale
+        setReservations(prev => [response.data, ...prev]);
+        
+        // Mettre à jour le statut de l'invendu
+        setInvendus(prev => prev.map(inv => 
+          inv.id === invenduId 
+            ? { ...inv, status: 'reserved', reserved_by: userId }
+            : inv
+        ));
+        
+        return response.data;
       }
-
-      // Créer une nouvelle réservation
-      const newReservation = {
-        id: `res_${Date.now()}`,
-        invenduId,
-        userId,
-        status: 'active',
-        createdAt: new Date().toISOString()
-      };
-
-      // Mettre à jour l'invendu et les réservations
-      const updatedInvendus = invendus.map(inv => 
-        inv.id === invenduId 
-          ? { 
-              ...inv, 
-              status: 'reserved', 
-              reservedBy: userId,
-              updatedAt: new Date().toISOString()
-            }
-          : inv
-      );
-
-      const updatedReservations = [...reservations, newReservation];
-
-      // Mettre à jour les states et sauvegarder
-      setInvendus(updatedInvendus);
-      setReservations(updatedReservations);
-      await saveData(updatedInvendus, updatedReservations);
-
-      return newReservation;
+      
+      throw new Error(response.message || 'Erreur lors de la réservation');
     } catch (err) {
       console.error('Erreur de réservation', err);
       throw err;
+    } finally {
+      setIsLoading(false);
     }
-  }, [invendus, reservations, saveData]);
+  }, []);
 
   // Annuler une réservation
   const cancelReservation = useCallback(async (reservationId) => {
     try {
-      // Trouver la réservation
-      const reservation = reservations.find(r => r.id === reservationId);
-      if (!reservation) {
-        throw new Error('Réservation non trouvée');
+      setIsLoading(true);
+      
+      const response = await ApiService.cancelReservation(reservationId);
+      
+      if (response.success) {
+        // Trouver la réservation pour obtenir l'ID de l'invendu
+        const reservation = reservations.find(r => r.id === reservationId);
+        
+        if (reservation) {
+          // Mettre à jour le statut de l'invendu
+          setInvendus(prev => prev.map(inv => 
+            inv.id === reservation.invendu_id
+              ? { ...inv, status: 'pending', reserved_by: null }
+              : inv
+          ));
+        }
+        
+        // Retirer la réservation de la liste
+        setReservations(prev => prev.filter(r => r.id !== reservationId));
+        
+        return true;
       }
-
-      // Mettre à jour l'invendu associé
-      const updatedInvendus = invendus.map(inv => 
-        inv.id === reservation.invenduId
-          ? { 
-              ...inv, 
-              status: 'pending', 
-              reservedBy: null,
-              updatedAt: new Date().toISOString()
-            }
-          : inv
-      );
-
-      // Supprimer la réservation
-      const updatedReservations = reservations.filter(r => r.id !== reservationId);
-
-      // Mettre à jour les states et sauvegarder
-      setInvendus(updatedInvendus);
-      setReservations(updatedReservations);
-      await saveData(updatedInvendus, updatedReservations);
-
-      return true;
+      
+      throw new Error(response.message || 'Erreur lors de l\'annulation');
     } catch (err) {
       console.error('Erreur d\'annulation', err);
       throw err;
+    } finally {
+      setIsLoading(false);
     }
-  }, [invendus, reservations, saveData]);
+  }, [reservations]);
+
+  // Mettre à jour une réservation
+  const updateReservation = useCallback(async (id, updates) => {
+    try {
+      setIsLoading(true);
+      
+      const response = await ApiService.updateReservation(id, updates.status);
+      
+      if (response.success && response.data) {
+        // Mettre à jour dans la liste locale
+        setReservations(prev => prev.map(res => 
+          res.id === id ? response.data : res
+        ));
+        
+        // Si le statut est 'collected', mettre à jour l'invendu
+        if (updates.status === 'collected') {
+          const reservation = reservations.find(r => r.id === id);
+          if (reservation) {
+            setInvendus(prev => prev.map(inv => 
+              inv.id === reservation.invendu_id
+                ? { ...inv, status: 'completed' }
+                : inv
+            ));
+          }
+        }
+        
+        return response.data;
+      }
+      
+      throw new Error(response.message || 'Erreur lors de la mise à jour');
+    } catch (err) {
+      console.error('Erreur de mise à jour de réservation', err);
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [reservations]);
 
   // Récupérer les invendus disponibles
   const getAvailableInvendus = useCallback(() => {
-    return invendus.filter(inv => inv.status === 'pending');
+    return invendus.filter(inv => inv.status === 'pending' || inv.status === 'available');
   }, [invendus]);
 
   // Récupérer les réservations actives d'un utilisateur
   const getUserReservations = useCallback((userId) => {
     return reservations.filter(r => 
-      r.userId === userId && r.status === 'active'
+      r.user_id === userId && 
+      (r.status === 'active' || r.status === 'pending')
     );
   }, [reservations]);
 
-  // Synchronisation potentielle avec un backend
-  const syncWithServer = useCallback(async () => {
+  // Obtenir les statistiques du restaurant
+  const getRestaurantStats = useCallback(async () => {
     try {
-      // Vérifier la connexion réseau
-      const netInfo = await NetInfo.fetch();
-      if (!netInfo.isConnected) {
-        throw new Error('Pas de connexion internet');
+      const response = await ApiService.getStats();
+      
+      if (response.success && response.data) {
+        return response.data;
       }
-
-      // Implémenter la synchronisation avec un backend réel
-      // Exemple simplifié de ce qui pourrait être fait
-      // const serverData = await apiCall.sync(invendus, reservations);
-      // setInvendus(serverData.invendus);
-      // setReservations(serverData.reservations);
-      // await saveData();
-
-      return { invendus, reservations };
+      
+      // Fallback avec calculs locaux
+      const completedInvendus = invendus.filter(inv => 
+        inv.restaurant_id === user?.id && inv.status === 'completed'
+      );
+      
+      return {
+        repasSauves: completedInvendus.length,
+        associationsAidees: new Set(completedInvendus.map(inv => inv.reserved_by)).size,
+        co2Economise: completedInvendus.length * 2.5 // Estimation
+      };
     } catch (err) {
-      console.error('Erreur de synchronisation', err);
-      throw err;
+      console.error('Erreur lors de la récupération des stats', err);
+      
+      // Retourner des valeurs par défaut
+      return {
+        repasSauves: 0,
+        associationsAidees: 0,
+        co2Economise: 0
+      };
     }
-  }, [invendus, reservations, saveData]);
+  }, [invendus, user]);
 
-  // Charger les données au montage
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  // Rechercher des invendus avec filtres
+  const searchInvendus = useCallback(async (filters) => {
+    try {
+      setIsLoading(true);
+      
+      const response = await ApiService.getInvendus(filters);
+      
+      if (response.success && response.data) {
+        setInvendus(response.data);
+        return response.data;
+      }
+      
+      return [];
+    } catch (err) {
+      console.error('Erreur de recherche', err);
+      return [];
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
   // Valeur mémoïsée du contexte
   const contextValue = useMemo(() => ({
     // États
     invendus,
     reservations,
+    restaurants,
+    associations,
     isLoading,
     error,
+    lastUpdate,
 
     // Méthodes
     addInvendu,
     updateInvendu,
+    deleteInvendu,
     reserveInvendu,
     cancelReservation,
+    updateReservation,
     getAvailableInvendus,
     getUserReservations,
-    syncWithServer,
-    loadData,
+    getRestaurantStats,
+    searchInvendus,
+    refreshData,
   }), [
     invendus,
     reservations,
+    restaurants,
+    associations,
     isLoading,
     error,
+    lastUpdate,
     addInvendu,
     updateInvendu,
+    deleteInvendu,
     reserveInvendu,
     cancelReservation,
+    updateReservation,
     getAvailableInvendus,
     getUserReservations,
-    syncWithServer,
-    loadData
+    getRestaurantStats,
+    searchInvendus,
+    refreshData
   ]);
 
   return (

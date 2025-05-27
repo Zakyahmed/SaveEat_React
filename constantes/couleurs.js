@@ -1,7 +1,11 @@
+
+
+
 export const colors = {
   // Couleurs primaires
   green: '#4CAF50',       
-  orange: '#FF9800',     
+  orange: '#FF9800',    
+  beige: '#F5F5DC', 
   
   // Nuances de couleurs
   greenLight: '#E8F5E9', 

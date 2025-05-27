@@ -1,11 +1,24 @@
+// ecrans/EcranVerificationProfil.js
 import React, { useCallback } from 'react';
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, RefreshControl, Alert, SafeAreaView, StatusBar } from 'react-native';
+import { 
+  View, 
+  Text, 
+  FlatList, 
+  StyleSheet, 
+  TouchableOpacity, 
+  RefreshControl, 
+  Alert, 
+  SafeAreaView, 
+  StatusBar 
+} from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useJustificatifs } from '../hooks/useJustificatifs';
-import JustificatifUploader from '../components/JustificatifUploader';
-import { Ionicons } from '@expo/vector-icons';
+import JustificatifUploader from '../composants/JustificatifUploader';
+import { FontAwesome5 } from '@expo/vector-icons';
+import { colors } from '../constantes/couleurs';
 
 const EcranVerificationProfil = ({ navigation, route }) => {
+  // Récupération des données et fonctions du hook
   const { 
     justificatifs, 
     loading, 
@@ -14,7 +27,8 @@ const EcranVerificationProfil = ({ navigation, route }) => {
     deleteJustificatif 
   } = useJustificatifs();
   
-  const userType = route.params?.userType || 'restaurant'; // Type d'utilisateur (restaurant/association)
+  // Type d'utilisateur (restaurant/association)
+  const userType = route.params?.userType || 'restaurant';
   
   // Rafraîchir les données à chaque fois que l'écran est affiché
   useFocusEffect(
@@ -107,19 +121,43 @@ const EcranVerificationProfil = ({ navigation, route }) => {
   // Vérifier si un justificatif a été accepté
   const hasAcceptedJustificatif = justificatifs.some(j => j.statut === 'accepte');
   
+  // Gestionnaire pour naviguer vers l'écran principal
+  const navigateToMain = useCallback(() => {
+    if (userType === 'restaurant') {
+      navigation.navigate('RestaurantTabs');
+    } else {
+      navigation.navigate('AssociationTabs');
+    }
+  }, [navigation, userType]);
+  
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" />
+      
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Ionicons name="arrow-back" size={24} color="#333" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Vérification du profil</Text>
+        <View style={{ width: 24 }} />
+      </View>
+      
       <View style={styles.container}>
-        <Text style={styles.title}>Vérification du profil</Text>
         
         {hasAcceptedJustificatif ? (
           <View style={styles.verifiedContainer}>
-            <Ionicons name="checkmark-circle" size={50} color="#4CAF50" />
+            <FontAwesome5 name="checkmark-circle" size={50} color="#4CAF50" />
             <Text style={styles.verifiedText}>Votre profil est vérifié</Text>
             <Text style={styles.verifiedSubText}>
               Vous pouvez maintenant utiliser toutes les fonctionnalités de l'application
             </Text>
+            <TouchableOpacity 
+              style={styles.continueButton}
+              onPress={navigateToMain}
+            >
+              <Text style={styles.continueButtonText}>Continuer vers l'application</Text>
+            </TouchableOpacity>
           </View>
         ) : (
           <View style={styles.unverifiedContainer}>
@@ -184,15 +222,23 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#fff',
   },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
   container: {
     flex: 1,
     padding: 16,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 16,
-    color: '#333',
   },
   verifiedContainer: {
     alignItems: 'center',
@@ -211,6 +257,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: '#388E3C',
     marginTop: 8,
+  },
+  continueButton: {
+    marginTop: 20,
+    backgroundColor: colors.green,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  continueButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 16,
   },
   unverifiedContainer: {
     marginBottom: 24,

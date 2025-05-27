@@ -1,167 +1,154 @@
+// hooks/useJustificatifs.js - Version avec ApiService
 import { useState, useEffect, useCallback } from 'react';
-import { Alert, Platform } from 'react-native';
-import * as FileSystem from 'expo-file-system';
+import { Alert } from 'react-native';
+import ApiService from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
-// IMPORTANT : Remplacez X par l'IP de votre machine
-const API_URL = 'http://192.168.1.X:8888/api'; // PAS de https://, juste http://
-
 export const useJustificatifs = () => {
+  // États
   const [justificatifs, setJustificatifs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  
+  // Récupération du contexte Auth
   const { authToken } = useAuth();
   
-  // Configuration de l'en-tête d'autorisation pour les requêtes normales
-  const axiosConfig = useCallback(() => {
-    return {
-      headers: {
-        'Authorization': `Bearer ${authToken}`,
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-      }
-    };
-  }, [authToken]);
-  
-  // Récupération des justificatifs depuis l'API
+  // Fonction asynchrone pour récupérer les justificatifs
   const fetchJustificatifs = useCallback(async () => {
-    if (!authToken) return;
-    
-    setLoading(true);
-    setError(null);
+    if (!authToken) {
+      console.log('Pas de token disponible');
+      return;
+    }
     
     try {
-      const response = await fetch(`${API_URL}/justificatifs/status`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-          'Accept': 'application/json',
-        }
+      setLoading(true);
+      setError(null);
+      
+      // Utiliser ApiService
+      const response = await ApiService.request('/justificatifs', {
+        method: 'GET'
       });
       
-      const data = await response.json();
-      setJustificatifs(data.justificatifs || []);
+      // Mise à jour de l'état
+      setJustificatifs(response.data || []);
+      
     } catch (err) {
       console.error('Erreur lors de la récupération des justificatifs:', err);
-      setError('Une erreur est survenue lors de la récupération des justificatifs');
+      setError(err.message || 'Une erreur est survenue');
+      
+      // Ne pas afficher d'alerte si c'est juste un rafraîchissement
+      if (!refreshing) {
+        Alert.alert(
+          'Erreur', 
+          'Impossible de récupérer les justificatifs',
+          [{ text: 'OK' }]
+        );
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [authToken]);
+  }, [authToken, refreshing]);
   
-  // Rafraîchissement des données
+  // Fonction pour rafraîchir les données
   const refreshJustificatifs = useCallback(() => {
     setRefreshing(true);
     fetchJustificatifs();
   }, [fetchJustificatifs]);
   
-  // Envoi d'un nouveau justificatif
+  // Fonction asynchrone pour uploader un justificatif
   const uploadJustificatif = async (fileUri, type, commentaire = '') => {
     if (!authToken) {
       Alert.alert('Erreur', 'Vous devez être connecté pour envoyer un justificatif');
       return null;
     }
     
-    setLoading(true);
-    setError(null);
-    
     try {
-      // Déterminer le type MIME
-      const fileName = fileUri.split('/').pop();
-      let mimeType = 'application/pdf';
-      if (/\.(jpg|jpeg)$/i.test(fileName)) {
-        mimeType = 'image/jpeg';
-      } else if (/\.png$/i.test(fileName)) {
-        mimeType = 'image/png';
+      setLoading(true);
+      setError(null);
+      
+      // Utiliser la méthode d'upload d'ApiService
+      const response = await ApiService.uploadFile(fileUri, type, {
+        type_justificatif: type,
+        commentaire: commentaire
+      });
+      
+      if (response.success && response.data) {
+        // Rafraîchir la liste après l'upload
+        await fetchJustificatifs();
+        
+        Alert.alert(
+          'Succès',
+          'Votre justificatif a été envoyé avec succès',
+          [{ text: 'OK' }]
+        );
+        
+        return response.data;
+      } else {
+        throw new Error(response.message || 'Erreur lors de l\'envoi');
       }
       
-      console.log('Upload URL:', `${API_URL}/justificatifs`);
-      console.log('File URI:', fileUri);
-      console.log('Auth Token:', authToken ? 'Present' : 'Missing');
+    } catch (err) {
+      console.error('Erreur lors de l\'upload:', err);
+      setError(err.message);
       
-      const uploadResult = await FileSystem.uploadAsync(
-        `${API_URL}/justificatifs`,
-        fileUri,
-        {
-          fieldName: 'fichier',
-          httpMethod: 'POST',
-          mimeType: mimeType,
-          headers: {
-            'Authorization': `Bearer ${authToken}`,
-            'Accept': 'application/json',
-          },
-          parameters: {
-            type: type,
-            commentaire: commentaire || ''
-          },
-          uploadType: FileSystem.FileSystemUploadType.MULTIPART,
-        }
+      Alert.alert(
+        'Erreur d\'envoi',
+        err.message || 'Une erreur est survenue lors de l\'envoi du fichier',
+        [{ text: 'OK' }]
       );
       
-      console.log('Upload response status:', uploadResult.status);
-      console.log('Upload response body:', uploadResult.body);
-      
-      if (uploadResult.status === 200 || uploadResult.status === 201) {
-        const result = JSON.parse(uploadResult.body);
-        fetchJustificatifs();
-        return result.justificatif;
-      } else {
-        throw new Error(`Erreur upload: ${uploadResult.status}`);
-      }
-    } catch (err) {
-      console.error('Erreur lors de l\'envoi du justificatif:', err);
-      setError('Une erreur est survenue lors de l\'envoi');
-      Alert.alert('Erreur', 'Une erreur est survenue lors de l\'envoi du fichier');
       return null;
     } finally {
       setLoading(false);
     }
   };
   
-  // Suppression d'un justificatif
-  const deleteJustificatif = async (justificatifId) => {
+  // Fonction asynchrone pour supprimer un justificatif
+  const deleteJustificatif = useCallback(async (justificatifId) => {
     if (!authToken) {
       Alert.alert('Erreur', 'Vous devez être connecté pour supprimer un justificatif');
       return false;
     }
     
-    setLoading(true);
-    
     try {
-      const response = await fetch(`${API_URL}/justificatifs/${justificatifId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-          'Accept': 'application/json',
-        }
+      setLoading(true);
+      
+      // Appel API pour supprimer
+      const response = await ApiService.request(`/justificatifs/${justificatifId}`, {
+        method: 'DELETE'
       });
       
-      if (response.ok) {
-        // Mettre à jour la liste des justificatifs après suppression
-        setJustificatifs(current => current.filter(j => j.id !== justificatifId));
+      if (response.success) {
+        // Mise à jour immutable : filtrer le justificatif supprimé
+        setJustificatifs(current => 
+          current.filter(j => j.id !== justificatifId)
+        );
+        
         return true;
       } else {
-        throw new Error('Erreur lors de la suppression');
+        throw new Error(response.message || 'Erreur lors de la suppression');
       }
+      
     } catch (err) {
-      console.error('Erreur lors de la suppression du justificatif:', err);
-      setError('Une erreur est survenue lors de la suppression');
-      Alert.alert('Erreur', 'Une erreur est survenue lors de la suppression');
+      console.error('Erreur:', err);
+      Alert.alert('Erreur', 'Impossible de supprimer le justificatif');
       return false;
     } finally {
       setLoading(false);
     }
-  };
+  }, [authToken]);
   
-  // Charger les justificatifs au montage du composant
+  // useEffect pour charger les justificatifs au montage
   useEffect(() => {
     if (authToken) {
+      console.log('Token disponible, chargement des justificatifs...');
       fetchJustificatifs();
     }
-  }, [fetchJustificatifs, authToken]);
+  }, [authToken, fetchJustificatifs]);
   
+  // Retourner les valeurs et fonctions du hook
   return {
     justificatifs,
     loading,
@@ -170,5 +157,6 @@ export const useJustificatifs = () => {
     refreshJustificatifs,
     uploadJustificatif,
     deleteJustificatif,
+    refetch: fetchJustificatifs
   };
 };

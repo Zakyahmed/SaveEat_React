@@ -1,25 +1,25 @@
 // theme/styles.js
-import { StyleSheet, Platform, StatusBar } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { colors } from '../constantes/couleurs';
 
 export const globalStyles = StyleSheet.create({
-  // Styles de conteneur principal
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
-  },
   safeArea: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: 'white',
   },
-  scrollView: {
-    flex: 1,
+  label: {
+    fontSize: 14,
+    marginBottom: 8,
+    fontWeight: '500',
+    color: '#333',
   },
-  contentContainer: {
-    padding: 15,
-    paddingBottom: 30,
+  errorText: {
+    color: '#f44336',
+    fontSize: 12,
+    marginTop: 5,
+    marginLeft: 5,
   },
+
   
   // En-têtes
   header: {
