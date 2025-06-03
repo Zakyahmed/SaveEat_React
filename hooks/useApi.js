@@ -1,8 +1,7 @@
+// hooks/useApi.js
 import { useState, useCallback } from 'react';
 import { useAuth } from './useAuth';
-
-// URL ngrok
-const API_URL = 'https://abc123.ngrok.io/api';
+import { API_BASE_URL } from '../services/api';
 
 export const useApi = () => {
   const [loading, setLoading] = useState(false);
@@ -15,7 +14,7 @@ export const useApi = () => {
       setLoading(true);
       setError(null);
       
-      const response = await fetch(`${API_URL}${endpoint}`, {
+      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
         ...options,
         headers: {
           'Authorization': `Bearer ${authToken}`,

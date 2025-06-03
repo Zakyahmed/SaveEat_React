@@ -1,209 +1,235 @@
+// services/ApiService.js
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_BASE_URL } from './api';
+
 class ApiService {
   constructor() {
     this.baseURL = API_BASE_URL;
   }
 
-  // Méthode pour obtenir les headers avec le token
-  async getHeaders(includeAuth = true) {
-    const headers = {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    };
-
-    if (includeAuth) {
-      const token = await AsyncStorage.getItem('authToken');
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-    }
-
-    return headers;
-  }
-
   // Méthode générique pour les requêtes
   async request(endpoint, options = {}) {
     try {
-      const headers = await this.getHeaders(options.includeAuth !== false);
+      const token = await AsyncStorage.getItem('@saveeat:authToken');
       
-      const response = await fetch(`${this.baseURL}${endpoint}`, {
+      const config = {
         ...options,
         headers: {
-          ...headers,
-          ...options.headers,
-        },
-      });
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          ...options.headers
+        }
+      };
 
-      // Si la réponse n'est pas OK, parser l'erreur
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `Erreur HTTP: ${response.status}`);
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
       }
 
-      // Parser la réponse JSON
+      const response = await fetch(`${this.baseURL}${endpoint}`, config);
       const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || `HTTP ${response.status}`);
+      }
+
       return data;
     } catch (error) {
-      console.error('Erreur API:', error);
+      console.error('API Error:', error);
       throw error;
     }
   }
 
-  // Méthodes d'authentification
+  // Auth endpoints
   async login(email, password) {
-    const data = await this.request('/login', {
+    const response = await this.request('/auth/login', {
       method: 'POST',
-      includeAuth: false,
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password })
     });
-
-    // Stocker le token
-    if (data.token) {
-      await AsyncStorage.setItem('authToken', data.token);
+    
+    // Stocker le token si présent
+    if (response.token) {
+      await AsyncStorage.setItem('@saveeat:authToken', response.token);
     }
-
-    return data;
+    
+    return response;
   }
 
   async register(userData) {
-    const data = await this.request('/register', {
+    const response = await this.request('/auth/register', {
       method: 'POST',
-      includeAuth: false,
-      body: JSON.stringify(userData),
+      body: JSON.stringify(userData)
     });
-
-    // Stocker le token si fourni
-    if (data.token) {
-      await AsyncStorage.setItem('authToken', data.token);
+    
+    // Stocker le token si présent
+    if (response.token) {
+      await AsyncStorage.setItem('@saveeat:authToken', response.token);
     }
-
-    return data;
+    
+    return response;
   }
 
   async logout() {
     try {
-      await this.request('/logout', { method: 'POST' });
-    } catch (error) {
-      console.log('Erreur logout API:', error);
+      await this.request('/auth/logout', { method: 'POST' });
+    } finally {
+      // Toujours supprimer le token local
+      await AsyncStorage.removeItem('@saveeat:authToken');
     }
-    
-    // Supprimer le token local dans tous les cas
-    await AsyncStorage.removeItem('authToken');
   }
 
   async getProfile() {
-    return this.request('/profile');
+    return this.request('/auth/profile');
   }
 
-  async updateProfile(data) {
-    return this.request('/profile', {
+  async updateProfile(updates) {
+    return this.request('/auth/profile', {
       method: 'PUT',
-      body: JSON.stringify(data),
+      body: JSON.stringify(updates)
     });
   }
 
-  // Méthodes pour les invendus
+  // Invendus endpoints
   async getInvendus(filters = {}) {
     const queryString = new URLSearchParams(filters).toString();
-    return this.request(`/invendus?${queryString}`);
-  }
-
-  async getInvendu(id) {
-    return this.request(`/invendus/${id}`);
+    return this.request(`/invendus${queryString ? '?' + queryString : ''}`);
   }
 
   async createInvendu(data) {
     return this.request('/invendus', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(data)
     });
   }
 
   async updateInvendu(id, data) {
     return this.request(`/invendus/${id}`, {
       method: 'PUT',
-      body: JSON.stringify(data),
+      body: JSON.stringify(data)
     });
   }
 
   async deleteInvendu(id) {
     return this.request(`/invendus/${id}`, {
-      method: 'DELETE',
+      method: 'DELETE'
     });
   }
 
-  // Méthodes pour les réservations
+  // Reservations endpoints
   async getReservations() {
-    return this.request('/reservations');
+    const userType = await AsyncStorage.getItem('@saveeat:userType');
+    const endpoint = userType === 'restaurant' 
+      ? '/reservations/restaurant' 
+      : '/reservations/association';
+    return this.request(endpoint);
   }
 
   async createReservation(invenduId) {
     return this.request('/reservations', {
       method: 'POST',
-      body: JSON.stringify({ invendu_id: invenduId }),
+      body: JSON.stringify({ invendu_id: invenduId })
     });
   }
 
   async updateReservation(id, status) {
     return this.request(`/reservations/${id}`, {
       method: 'PUT',
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status })
     });
   }
 
   async cancelReservation(id) {
-    return this.request(`/reservations/${id}/cancel`, {
-      method: 'POST',
+    return this.request(`/reservations/${id}`, {
+      method: 'DELETE'
     });
   }
 
-  // Méthodes pour les restaurants et associations
+  // Restaurants endpoints
   async getRestaurants() {
     return this.request('/restaurants');
   }
 
+  async getRestaurant(id) {
+    return this.request(`/restaurants/${id}`);
+  }
+
+  // Associations endpoints
   async getAssociations() {
-    return this.request('/associations');
+    return this.request('/search/associations');
   }
 
-  // Statistiques
+  // Stats endpoints
   async getStats() {
-    return this.request('/stats');
+    const userType = await AsyncStorage.getItem('@saveeat:userType');
+    if (userType === 'restaurant') {
+      // Pour les restaurants, obtenir leurs propres stats
+      const invendus = await this.request('/invendus/my');
+      const reservations = await this.request('/reservations/restaurant');
+      
+      // Calculer les stats
+      const completedReservations = reservations.data?.filter(r => r.status === 'completed') || [];
+      return {
+        success: true,
+        data: {
+          repasSauves: completedReservations.length,
+          associationsAidees: new Set(completedReservations.map(r => r.association_id)).size,
+          co2Economise: completedReservations.length * 2.5
+        }
+      };
+    }
+    
+    // Pour les autres types, stats générales
+    return this.request('/stats/general');
   }
 
-  // Upload de fichiers (pour les justificatifs)
-  async uploadFile(uri, type, additionalData = {}) {
-    const formData = new FormData();
-    
-    // Ajouter le fichier
-    formData.append('file', {
-      uri,
-      type: 'image/jpeg', // ou 'application/pdf'
-      name: 'upload.jpg',
-    });
+  // Justificatifs endpoints
+  async getJustificatifs() {
+    return this.request('/justificatifs');
+  }
 
-    // Ajouter les données supplémentaires
-    Object.keys(additionalData).forEach(key => {
-      formData.append(key, additionalData[key]);
-    });
+  async getJustificatifStatus() {
+    return this.request('/justificatifs/status');
+  }
 
-    const token = await AsyncStorage.getItem('authToken');
-    
-    const response = await fetch(`${this.baseURL}/upload`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'multipart/form-data',
-      },
-      body: formData,
-    });
+  // Upload file pour justificatifs
+  async uploadFile(fileUri, type, additionalData = {}) {
+    try {
+      const token = await AsyncStorage.getItem('@saveeat:authToken');
+      
+      const formData = new FormData();
+      formData.append('file', {
+        uri: fileUri,
+        type: 'image/jpeg',
+        name: 'justificatif.jpg'
+      });
+      
+      // Ajouter le type de justificatif
+      formData.append('type', type);
+      
+      Object.keys(additionalData).forEach(key => {
+        formData.append(key, additionalData[key]);
+      });
 
-    if (!response.ok) {
-      throw new Error(`Erreur upload: ${response.status}`);
+      const response = await fetch(`${this.baseURL}/justificatifs`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json',
+        },
+        body: formData
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Erreur upload');
+      }
+
+      return { success: true, data };
+    } catch (error) {
+      console.error('Upload Error:', error);
+      throw error;
     }
-
-    return response.json();
   }
 }
 
-// Exporter une instance unique
 export default new ApiService();

@@ -1,4 +1,1 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-// Configuration de base - REMPLACEZ PAR VOTRE URL NGROK
-const API_BASE_URL = 'https://YOUR-NGROK-URL.ngrok.io/api';
+export const API_BASE_URL = 'https://5008-195-176-241-239.ngrok-free.app';

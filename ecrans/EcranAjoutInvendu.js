@@ -15,7 +15,8 @@ import {
   ActivityIndicator,
   Image,
   StatusBar,
-  Dimensions
+  Dimensions,
+  StyleSheet  
 } from 'react-native';
 import { colors } from '../constantes/couleurs';
 import { globalStyles } from '../theme/styles';
